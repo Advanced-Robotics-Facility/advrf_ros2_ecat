@@ -1,0 +1,21 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>advrf_ros2_ecat</name>
+  <version>0.1.0</version>
+  <description>Native rclcpp bridge to the separately CMake-built ADVRF EtherCAT client and master libraries.</description>
+  <maintainer email="hpousseur@iit.it">Hugo Pousseur</maintainer>
+  <maintainer email="manuel.delucchi@iit.it">Manuel Delucchi</maintainer>
+  <license>TODO</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <depend>rclcpp</depend>
+  <depend>sensor_msgs</depend>
+  <depend>diagnostic_msgs</depend>
+  <depend>advrf_ros2_interfaces</depend>
+  <depend>eigen</depend>
+  <depend>yaml-cpp</depend>
+
+  <export><build_type>ament_cmake</build_type></export>
+  
+</package>
