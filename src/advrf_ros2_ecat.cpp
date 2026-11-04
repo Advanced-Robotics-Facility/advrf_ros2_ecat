@@ -236,7 +236,6 @@ int main(int argc, char **argv)
 
         const int period_ms = node->declare_parameter<int>("period_ms", 4, startup_parameter);
         const bool read_only = node->declare_parameter<bool>("read_only", false, startup_parameter);
-        const bool auto_start = node->declare_parameter<bool>("auto_start", false, startup_parameter);
 
         const int command_timeout_ms = node->declare_parameter<int>(
             "command_timeout_ms", 500, startup_parameter);
@@ -251,7 +250,8 @@ int main(int argc, char **argv)
             const std::string base = std::string("qos.") + endpoint + ".";
             const auto depth = node->declare_parameter<int>(base + "depth", 1, startup_parameter);
             const auto reliability = node->declare_parameter<std::string>(
-                base + "reliability", "best_effort", startup_parameter);
+                base + "reliability", endpoint == std::string("state") ? "reliable" : "best_effort",
+                startup_parameter);
             const auto durability = node->declare_parameter<std::string>(
                 base + "durability", "volatile", startup_parameter);
             if (depth <= 0 || depth > 100000)
@@ -273,9 +273,8 @@ int main(int argc, char **argv)
         EcWrapper ec_wrapper;
         ec_wrapper.create_ec(client, ec_cfg);
 
-        // Defer motor activation to a valid command unless auto_start is enabled.
-        if (read_only || !auto_start)
-            ec_wrapper.set_start_devices({});
+        // Defer motor activation until the first valid command.
+        ec_wrapper.set_start_devices({});
 
         std::signal(SIGINT, sig_handler);
         std::signal(SIGTERM, sig_handler);
@@ -297,7 +296,7 @@ int main(int argc, char **argv)
         }
 
         EcWriter ec_writer;
-        bool devices_started = !read_only && auto_start;
+        bool devices_started = false;
         bool command_received = false;
         using Clock = std::chrono::steady_clock;
         bool watchdog_armed = false;

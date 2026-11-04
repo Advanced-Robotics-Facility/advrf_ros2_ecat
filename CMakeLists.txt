@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 
-project(advrf_ros2_ecat LANGUAGES CXX)
+project(advrf_ros2_ecat LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
