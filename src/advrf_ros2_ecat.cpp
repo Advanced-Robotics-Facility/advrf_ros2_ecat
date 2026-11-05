@@ -49,8 +49,8 @@ bool on_motor_command(const advrf_ros2_ecat::Commands &msg, const DST &start, bo
         {
             if (!devices_started)
             {
-                if (!client->start_devices(start))
-                    throw std::runtime_error("Motor START failed");
+                // if (!client->start_devices(start))
+                //     throw std::runtime_error("Motor START failed");
                 devices_started = true;
             }
             motor_reference_map = std::move(*references);
@@ -274,7 +274,7 @@ int main(int argc, char **argv)
         ec_wrapper.create_ec(client, ec_cfg);
 
         // Defer motor activation until the first valid command.
-        ec_wrapper.set_start_devices({});
+       // ec_wrapper.set_start_devices({});
 
         std::signal(SIGINT, sig_handler);
         std::signal(SIGTERM, sig_handler);
