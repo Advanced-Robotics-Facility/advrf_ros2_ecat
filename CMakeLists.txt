@@ -82,6 +82,8 @@ target_link_libraries(advrf_ros2_ecat_lib PUBLIC
 add_executable(bridge_ecat_client_node src/advrf_ros2_ecat.cpp)
 target_link_libraries(bridge_ecat_client_node PRIVATE advrf_ros2_ecat_lib)
 
+target_link_options(bridge_ecat_client_node PRIVATE "LINKER:--exclude-libs,ALL")
+
 if(Xenomai_FOUND)
   xenomai_target_bootstrap(bridge_ecat_client_node SKINS posix)
 endif()
