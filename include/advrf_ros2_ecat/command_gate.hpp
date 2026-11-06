@@ -10,16 +10,27 @@ class CommandGate
 public:
   using Clock = std::chrono::steady_clock;
   bool active() const { return active_.load(); }
+  void activate_on_first_message(bool enabled) { auto_activation_pending_ = enabled; }
+  bool awaiting_first_message() const { return auto_activation_pending_; }
+  bool can_accept() const { return active() || awaiting_first_message(); }
   bool set_active(bool enabled, Clock::time_point now = Clock::now())
   {
+    auto_activation_pending_ = false; // An explicit service request takes precedence.
     if (enabled == active()) return false;
     last_command_ = now;
     active_.store(enabled);
     return true;
   }
-  void command_received(Clock::time_point now = Clock::now())
+  bool command_received(Clock::time_point now = Clock::now())
   {
-    if (active()) last_command_ = now;
+    if (!can_accept()) return false;
+    if (auto_activation_pending_)
+    {
+      auto_activation_pending_ = false;
+      active_.store(true);
+    }
+    last_command_ = now;
+    return true;
   }
   bool expired(std::chrono::milliseconds timeout, Clock::time_point now = Clock::now()) const
   {
@@ -31,6 +42,7 @@ public:
   }
 private:
   std::atomic<bool> active_{false};
+  bool auto_activation_pending_ = false;
   Clock::time_point last_command_{};
 };
 }

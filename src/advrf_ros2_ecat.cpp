@@ -50,7 +50,7 @@ bool on_motor_command(const advrf_ros2_ecat::Commands &msg)
     try
     {
         auto references = advrf_ros2_ecat::convert::from_ros(msg, motor_reference_map);
-        if (references)
+        if (references && command_gate.command_received())
         {
             motor_reference_map = std::move(*references);
             reference_pending = true;
@@ -239,7 +239,9 @@ int main(int argc, char **argv)
         startup_parameter.read_only = true;
 
         const int period_ms = node->declare_parameter<int>("period_ms", 4, startup_parameter);
-        const bool read_only = node->declare_parameter<bool>("read_only", false, startup_parameter);
+        const bool active_on_first_msg = node->declare_parameter<bool>(
+            "active_on_first_msg", false, startup_parameter);
+        command_gate.activate_on_first_message(active_on_first_msg);
 
         const int command_timeout_ms = node->declare_parameter<int>(
             "command_timeout_ms", 500, startup_parameter);
@@ -303,11 +305,15 @@ int main(int argc, char **argv)
             "/diagnostics", rclcpp::QoS(10).reliable());
         auto active_publisher = node->create_publisher<std_msgs::msg::Bool>(
             "active", rclcpp::QoS(1).reliable().transient_local());
+        auto auto_activation_publisher = node->create_publisher<std_msgs::msg::Bool>(
+            "auto_activation_pending", rclcpp::QoS(1).reliable().transient_local());
         const auto publish_active = [&]()
         {
             std_msgs::msg::Bool state;
             state.data = command_gate.active();
             active_publisher->publish(state);
+            state.data = command_gate.awaiting_first_message();
+            auto_activation_publisher->publish(state);
         };
         publish_active();
         const auto enter_fault = [&](const std::string &reason)
@@ -341,8 +347,9 @@ int main(int argc, char **argv)
             status.level = fault ? diagnostic_msgs::msg::DiagnosticStatus::ERROR
                                 : diagnostic_msgs::msg::DiagnosticStatus::OK;
             status.message = fault ? "FAULT: " + fault_reason
-                : read_only ? "PIPE OK (read only)"
-                : command_gate.active() ? "PIPE OK - TX active" : "PIPE OK - TX inactive";
+                : command_gate.active() ? "PIPE OK - TX active"
+                : command_gate.awaiting_first_message() ? "PIPE OK - waiting for first valid command"
+                : "PIPE OK - TX inactive";
             const auto value = [&](const std::string &key, const std::string &text)
             {
                 diagnostic_msgs::msg::KeyValue entry;
@@ -350,10 +357,11 @@ int main(int argc, char **argv)
                 entry.value = text;
                 status.values.push_back(entry);
             };
-            value("mode", fault ? "FAULT" : read_only ? "READ_ONLY"
-                : command_gate.active() ? "ACTIVE" : "INACTIVE");
+            value("mode", fault ? "FAULT" : command_gate.active() ? "ACTIVE"
+                : command_gate.awaiting_first_message() ? "WAITING_FIRST_MESSAGE" : "INACTIVE");
             value("pipe", client->get_client_status().run_loop ? "OK" : "FAULT");
             value("active", command_gate.active() ? "true" : "false");
+            value("auto_activation_pending", command_gate.awaiting_first_message() ? "true" : "false");
             value("watchdog_armed", command_gate.active() ? "true" : "false");
             value("command_timeout_ms", std::to_string(command_timeout_ms));
             value("watchdog_age_ms", command_gate.active()
@@ -367,10 +375,10 @@ int main(int argc, char **argv)
             "set_active", [&](const std::shared_ptr<std_srvs::srv::SetBool::Request> request,
                               std::shared_ptr<std_srvs::srv::SetBool::Response> response)
             {
-                if (request->data && (fault || read_only))
+                if (request->data && fault)
                 {
                     response->success = false;
-                    response->message = fault ? "Bridge fault: restart required" : "Bridge is read-only";
+                    response->message = "Bridge fault: restart required";
                     return;
                 }
                 if (ec_cfg.protocol == "iddp") pthread_mutex_lock(&reference_mutex);
@@ -391,28 +399,30 @@ int main(int argc, char **argv)
         auto motors = node->create_publisher<Motor>("rx/motors", state_qos);
         auto joints = node->create_publisher<JointState>("rx/joint_states", state_qos);
 
-        rclcpp::Subscription<Commands>::SharedPtr commands;
-        if (!read_only)
-        {
-            commands = node->create_subscription<Commands>(
-                "tx/motors", command_qos,
-                [&](const Commands &msg)
+        auto commands = node->create_subscription<Commands>(
+            "tx/motors", command_qos,
+            [&](const Commands &msg)
+            {
+                if (fault || !command_gate.can_accept()) return;
+                const bool was_active = command_gate.active();
+                if (on_motor_command(msg))
                 {
-                    if (fault || !command_gate.active()) return;
-                    if (on_motor_command(msg))
+                    command_received = true;
+                    if (!was_active)
                     {
-                        command_received = true;
-                        command_gate.command_received();
+                        publish_active();
+                        publish_diagnostics();
+                        RCLCPP_INFO(node->get_logger(), "TX activated by first valid motor command");
                     }
-                    else
-                        RCLCPP_WARN_THROTTLE(node->get_logger(), *node->get_clock(), 2000,
-                                             "Rejected invalid motor command batch");
-                });
-        }
+                }
+                else
+                    RCLCPP_WARN_THROTTLE(node->get_logger(), *node->get_clock(), 2000,
+                                         "Rejected invalid motor command batch");
+            });
 
         rclcpp::executors::SingleThreadedExecutor executor;
         executor.add_node(node);
-        if (ec_cfg.protocol == "iddp" && !read_only)
+        if (ec_cfg.protocol == "iddp")
         {
             const auto info = client->get_client_thread_info();
             ec_writer.create(info.policy != SCHED_OTHER, info.cpu >= 0 ? info.cpu : sched_getcpu());
