@@ -13,7 +13,9 @@
 
 #include <rclcpp/rclcpp.hpp>
 #include <diagnostic_msgs/msg/diagnostic_array.hpp>
-#include <yaml-cpp/yaml.h>
+#include <std_msgs/msg/bool.hpp>
+#include <std_srvs/srv/set_bool.hpp>
+#include "advrf_ros2_ecat/command_gate.hpp"
 
 #include "advrf_ros2_ecat/converter.hpp"
 #include "utils/ec_wrapper.h"
@@ -29,13 +31,16 @@ namespace
 volatile std::sig_atomic_t run_loop = 1;
 static pthread_mutex_t reference_mutex;
 static sem_t writer_ready;
+advrf_ros2_ecat::CommandGate command_gate;
+// Protected by reference_mutex; semaphore credits alone never authorize a write.
+bool reference_pending = false;
 
 void sig_handler(int)
 {
     run_loop = 0;
 }
 
-bool on_motor_command(const advrf_ros2_ecat::Commands &msg, const DST &start, bool &devices_started)
+bool on_motor_command(const advrf_ros2_ecat::Commands &msg)
 {
     if (ec_cfg.protocol == "iddp") {
         pthread_mutex_lock(&reference_mutex);
@@ -47,13 +52,8 @@ bool on_motor_command(const advrf_ros2_ecat::Commands &msg, const DST &start, bo
         auto references = advrf_ros2_ecat::convert::from_ros(msg, motor_reference_map);
         if (references)
         {
-            if (!devices_started)
-            {
-                // if (!client->start_devices(start))
-                //     throw std::runtime_error("Motor START failed");
-                devices_started = true;
-            }
             motor_reference_map = std::move(*references);
+            reference_pending = true;
             accepted = true;
         }
     }
@@ -169,7 +169,12 @@ public:
                     pthread_mutex_lock(&reference_mutex);
                     try
                     {
-                        set_reference();
+                        if (command_gate.active() && reference_pending)
+                        {
+                            set_reference();
+                            client->write();
+                            reference_pending = false;
+                        }
                     }
                     catch (...)
                     {
@@ -178,7 +183,6 @@ public:
                     }
                     pthread_mutex_unlock(&reference_mutex);
 
-                    client->write();
                 }
                 else if (errno != EINTR)
                 {
@@ -273,13 +277,10 @@ int main(int argc, char **argv)
         EcWrapper ec_wrapper;
         ec_wrapper.create_ec(client, ec_cfg);
 
-        // Defer motor activation until the first valid command.
-       // ec_wrapper.set_start_devices({});
-
         std::signal(SIGINT, sig_handler);
         std::signal(SIGTERM, sig_handler);
 
-        // Start EtherCAT Client
+        // The client wrapper owns device startup, including control modes and gains.
         const bool ec_sys_started = ec_wrapper.start_ec_sys();
         if (!ec_sys_started)
             throw std::runtime_error("EtherCAT system startup failed");
@@ -287,37 +288,42 @@ int main(int argc, char **argv)
             throw std::runtime_error("Missing motor references or too many motors");
 
         std::map<int32_t, std::string> names;
-        DST start;
         for (const auto &[id, reference] : motor_reference_map)
         {
             const auto &config = ec_cfg.device_config_map.at(id);
             names[id] = config.device_name;
-            start.emplace_back(id, config.control_mode_type, config.gains);
         }
 
         EcWriter ec_writer;
-        bool devices_started = false;
         bool command_received = false;
         using Clock = std::chrono::steady_clock;
-        bool watchdog_armed = false;
         bool fault = false;
         std::string fault_reason;
-        auto last_command = Clock::now();
         auto diagnostics = node->create_publisher<diagnostic_msgs::msg::DiagnosticArray>(
             "/diagnostics", rclcpp::QoS(10).reliable());
+        auto active_publisher = node->create_publisher<std_msgs::msg::Bool>(
+            "active", rclcpp::QoS(1).reliable().transient_local());
+        const auto publish_active = [&]()
+        {
+            std_msgs::msg::Bool state;
+            state.data = command_gate.active();
+            active_publisher->publish(state);
+        };
+        publish_active();
         const auto enter_fault = [&](const std::string &reason)
         {
             if (fault) return;
             fault = true;
             fault_reason = reason;
+            command_gate.set_active(false);
+            command_received = false;
+            publish_active();
             // Join the writer before STOP so no queued reference can follow it.
             ec_writer.stop_writer();
             try
             {
                 if (!client->stop_devices())
                     fault_reason += "; motor STOP failed";
-                else
-                    devices_started = false;
             }
             catch (const std::exception &error)
             {
@@ -336,7 +342,7 @@ int main(int argc, char **argv)
                                 : diagnostic_msgs::msg::DiagnosticStatus::OK;
             status.message = fault ? "FAULT: " + fault_reason
                 : read_only ? "PIPE OK (read only)"
-                : watchdog_armed ? "PIPE OK - TX running" : "PIPE OK - waiting TX to start";
+                : command_gate.active() ? "PIPE OK - TX active" : "PIPE OK - TX inactive";
             const auto value = [&](const std::string &key, const std::string &text)
             {
                 diagnostic_msgs::msg::KeyValue entry;
@@ -345,17 +351,42 @@ int main(int argc, char **argv)
                 status.values.push_back(entry);
             };
             value("mode", fault ? "FAULT" : read_only ? "READ_ONLY"
-                : watchdog_armed ? "RUNNING" : "WAITING_TX");
+                : command_gate.active() ? "ACTIVE" : "INACTIVE");
             value("pipe", client->get_client_status().run_loop ? "OK" : "FAULT");
-            value("watchdog_armed", watchdog_armed ? "true" : "false");
+            value("active", command_gate.active() ? "true" : "false");
+            value("watchdog_armed", command_gate.active() ? "true" : "false");
             value("command_timeout_ms", std::to_string(command_timeout_ms));
-            value("last_valid_command_age_ms", watchdog_armed
-                ? std::to_string(duration_cast<milliseconds>(Clock::now() - last_command).count())
-                : "never received");
-            value("motors_started", devices_started ? "true" : "false");
+            value("watchdog_age_ms", command_gate.active()
+                ? std::to_string(command_gate.command_age().count()) : "inactive");
             array.status.push_back(std::move(status));
             diagnostics->publish(array);
+            publish_active();
         };
+
+        auto set_active = node->create_service<std_srvs::srv::SetBool>(
+            "set_active", [&](const std::shared_ptr<std_srvs::srv::SetBool::Request> request,
+                              std::shared_ptr<std_srvs::srv::SetBool::Response> response)
+            {
+                if (request->data && (fault || read_only))
+                {
+                    response->success = false;
+                    response->message = fault ? "Bridge fault: restart required" : "Bridge is read-only";
+                    return;
+                }
+                if (ec_cfg.protocol == "iddp") pthread_mutex_lock(&reference_mutex);
+                const bool changed = command_gate.set_active(request->data);
+                if (changed)
+                {
+                    reference_pending = false;
+                    command_received = false;
+                }
+                if (ec_cfg.protocol == "iddp") pthread_mutex_unlock(&reference_mutex);
+                publish_active();
+                publish_diagnostics();
+                response->success = true;
+                response->message = command_gate.active() ? "TX active; watchdog armed" : "TX inactive; watchdog disarmed";
+                RCLCPP_INFO(node->get_logger(), "%s", response->message.c_str());
+            });
 
         auto motors = node->create_publisher<Motor>("rx/motors", state_qos);
         auto joints = node->create_publisher<JointState>("rx/joint_states", state_qos);
@@ -367,12 +398,11 @@ int main(int argc, char **argv)
                 "tx/motors", command_qos,
                 [&](const Commands &msg)
                 {
-                    if (fault) return;
-                    if (on_motor_command(msg, start, devices_started))
+                    if (fault || !command_gate.active()) return;
+                    if (on_motor_command(msg))
                     {
                         command_received = true;
-                        watchdog_armed = true;
-                        last_command = Clock::now();
+                        command_gate.command_received();
                     }
                     else
                         RCLCPP_WARN_THROTTLE(node->get_logger(), *node->get_clock(), 2000,
@@ -397,8 +427,7 @@ int main(int argc, char **argv)
                 enter_fault("EtherCAT pipe stopped");
             if (!fault && !ec_writer.running())
                 enter_fault("EtherCAT writer stopped");
-            if (!fault && watchdog_armed &&
-                Clock::now() - last_command >= milliseconds(command_timeout_ms))
+            if (!fault && command_gate.expired(milliseconds(command_timeout_ms)))
                 enter_fault("Motor command watchdog timeout");
             if (Clock::now() >= next_diagnostic || fault)
             {
@@ -431,7 +460,7 @@ int main(int argc, char **argv)
             command_received = false;
             executor.spin_some();
 
-            if (ec_cfg.protocol != "iddp" && !read_only && command_received)
+            if (ec_cfg.protocol != "iddp" && command_gate.active() && command_received)
             {
                 set_reference();
                 client->write();

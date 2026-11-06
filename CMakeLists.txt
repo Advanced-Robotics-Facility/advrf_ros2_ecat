@@ -27,6 +27,8 @@ find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(diagnostic_msgs REQUIRED)
+find_package(std_msgs REQUIRED)
+find_package(std_srvs REQUIRED)
 find_package(advrf_ros2_interfaces REQUIRED)
 
 find_package(Eigen3 REQUIRED)
@@ -53,6 +55,8 @@ ament_target_dependencies(advrf_ros2_ecat_lib PUBLIC
   rclcpp
   sensor_msgs
   diagnostic_msgs
+  std_msgs
+  std_srvs
   advrf_ros2_interfaces
 )
 
@@ -83,4 +87,9 @@ install(TARGETS bridge_ecat_client_node
 
 install(DIRECTORY config DESTINATION share/${PROJECT_NAME})
 
+if(BUILD_TESTING)
+  find_package(ament_cmake_gtest REQUIRED)
+  ament_add_gtest(test_command_gate test/test_command_gate.cpp)
+  target_include_directories(test_command_gate PRIVATE include)
+endif()
 ament_package()
