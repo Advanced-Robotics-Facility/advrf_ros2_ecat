@@ -32,7 +32,6 @@ volatile std::sig_atomic_t run_loop = 1;
 static pthread_mutex_t reference_mutex;
 static sem_t writer_ready;
 advrf_ros2_ecat::CommandGate command_gate;
-// Protected by reference_mutex; semaphore credits alone never authorize a write.
 bool reference_pending = false;
 
 void sig_handler(int)
@@ -239,9 +238,9 @@ int main(int argc, char **argv)
         startup_parameter.read_only = true;
 
         const int period_ms = node->declare_parameter<int>("period_ms", 4, startup_parameter);
-        const bool active_on_first_msg = node->declare_parameter<bool>(
-            "active_on_first_msg", false, startup_parameter);
-        command_gate.activate_on_first_message(active_on_first_msg);
+        const bool active_tx_on_first_msg = node->declare_parameter<bool>(
+            "active_tx_on_first_msg", false, startup_parameter);
+        command_gate.activate_on_first_message(active_tx_on_first_msg);
 
         const int command_timeout_ms = node->declare_parameter<int>(
             "command_timeout_ms", 500, startup_parameter);
@@ -305,15 +304,11 @@ int main(int argc, char **argv)
             "/diagnostics", rclcpp::QoS(10).reliable());
         auto active_publisher = node->create_publisher<std_msgs::msg::Bool>(
             "active", rclcpp::QoS(1).reliable().transient_local());
-        auto auto_activation_publisher = node->create_publisher<std_msgs::msg::Bool>(
-            "auto_activation_pending", rclcpp::QoS(1).reliable().transient_local());
         const auto publish_active = [&]()
         {
             std_msgs::msg::Bool state;
             state.data = command_gate.active();
             active_publisher->publish(state);
-            state.data = command_gate.awaiting_first_message();
-            auto_activation_publisher->publish(state);
         };
         publish_active();
         const auto enter_fault = [&](const std::string &reason)
@@ -347,7 +342,8 @@ int main(int argc, char **argv)
             status.level = fault ? diagnostic_msgs::msg::DiagnosticStatus::ERROR
                                 : diagnostic_msgs::msg::DiagnosticStatus::OK;
             status.message = fault ? "FAULT: " + fault_reason
-                : command_gate.active() ? "PIPE OK - TX active"
+                : command_gate.watchdog_armed() ? "PIPE OK - TX communicating"
+                : command_gate.active() ? "PIPE OK - TX active, pending first valid command"
                 : command_gate.awaiting_first_message() ? "PIPE OK - waiting for first valid command"
                 : "PIPE OK - TX inactive";
             const auto value = [&](const std::string &key, const std::string &text)
@@ -357,22 +353,23 @@ int main(int argc, char **argv)
                 entry.value = text;
                 status.values.push_back(entry);
             };
-            value("mode", fault ? "FAULT" : command_gate.active() ? "ACTIVE"
+            value("mode", fault ? "FAULT" : command_gate.watchdog_armed() ? "ACTIVE_COMMUNICATING"
+                : command_gate.active() ? "ACTIVE_PENDING_MESSAGE"
                 : command_gate.awaiting_first_message() ? "WAITING_FIRST_MESSAGE" : "INACTIVE");
             value("pipe", client->get_client_status().run_loop ? "OK" : "FAULT");
             value("active", command_gate.active() ? "true" : "false");
             value("auto_activation_pending", command_gate.awaiting_first_message() ? "true" : "false");
-            value("watchdog_armed", command_gate.active() ? "true" : "false");
+            value("watchdog_armed", command_gate.watchdog_armed() ? "true" : "false");
             value("command_timeout_ms", std::to_string(command_timeout_ms));
-            value("watchdog_age_ms", command_gate.active()
+            value("watchdog_age_ms", command_gate.watchdog_armed()
                 ? std::to_string(command_gate.command_age().count()) : "inactive");
             array.status.push_back(std::move(status));
             diagnostics->publish(array);
             publish_active();
         };
 
-        auto set_active = node->create_service<std_srvs::srv::SetBool>(
-            "set_active", [&](const std::shared_ptr<std_srvs::srv::SetBool::Request> request,
+        auto set_active_tx = node->create_service<std_srvs::srv::SetBool>(
+            "set_active_tx", [&](const std::shared_ptr<std_srvs::srv::SetBool::Request> request,
                               std::shared_ptr<std_srvs::srv::SetBool::Response> response)
             {
                 if (request->data && fault)
@@ -392,7 +389,8 @@ int main(int argc, char **argv)
                 publish_active();
                 publish_diagnostics();
                 response->success = true;
-                response->message = command_gate.active() ? "TX active; watchdog armed" : "TX inactive; watchdog disarmed";
+                response->message = command_gate.active() ? (command_gate.watchdog_armed() ? "TX communicating; watchdog armed"
+                    : "TX active; waiting for first valid command; watchdog disarmed") : "TX inactive; watchdog disarmed";
                 RCLCPP_INFO(node->get_logger(), "%s", response->message.c_str());
             });
 
@@ -404,15 +402,15 @@ int main(int argc, char **argv)
             [&](const Commands &msg)
             {
                 if (fault || !command_gate.can_accept()) return;
-                const bool was_active = command_gate.active();
+                const bool was_armed = command_gate.watchdog_armed();
                 if (on_motor_command(msg))
                 {
                     command_received = true;
-                    if (!was_active)
+                    if (!was_armed)
                     {
                         publish_active();
                         publish_diagnostics();
-                        RCLCPP_INFO(node->get_logger(), "TX activated by first valid motor command");
+                        RCLCPP_INFO(node->get_logger(), "TX communicating; watchdog armed by first valid motor command");
                     }
                 }
                 else

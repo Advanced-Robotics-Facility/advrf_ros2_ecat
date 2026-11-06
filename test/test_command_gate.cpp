@@ -11,15 +11,20 @@ TEST(CommandGate, InactiveIgnoresCommandsAndHasNoWatchdog)
   gate.command_received(t);
   EXPECT_FALSE(gate.expired(500ms, t + 10s));
 }
-TEST(CommandGate, ActivationStartsDeadlineBeforeFirstCommand)
+TEST(CommandGate, ActivationWaitsForFirstCommandBeforeWatchdog)
 {
   CommandGate gate;
   const auto t = CommandGate::Clock::time_point{};
   EXPECT_TRUE(gate.set_active(true, t));
-  EXPECT_FALSE(gate.expired(500ms, t + 499ms));
-  EXPECT_TRUE(gate.expired(500ms, t + 500ms));
-  EXPECT_FALSE(gate.set_active(true, t + 600ms));
-  EXPECT_TRUE(gate.expired(500ms, t + 600ms)); // Repeated enable cannot postpone expiry.
+  EXPECT_TRUE(gate.active());
+  EXPECT_FALSE(gate.watchdog_armed());
+  EXPECT_FALSE(gate.expired(500ms, t + 10s));
+  EXPECT_TRUE(gate.command_received(t + 10s));
+  EXPECT_TRUE(gate.watchdog_armed());
+  EXPECT_FALSE(gate.expired(500ms, t + 10499ms));
+  EXPECT_TRUE(gate.expired(500ms, t + 10500ms));
+  EXPECT_FALSE(gate.set_active(true, t + 10600ms));
+  EXPECT_TRUE(gate.expired(500ms, t + 10600ms));
 }
 TEST(CommandGate, ValidCommandRefreshesOnlyWhileActive)
 {
@@ -34,7 +39,10 @@ TEST(CommandGate, ValidCommandRefreshesOnlyWhileActive)
   EXPECT_FALSE(gate.expired(500ms, t + 20s));
   gate.set_active(true, t + 20s);
   EXPECT_FALSE(gate.expired(500ms, t + 20499ms));
-  EXPECT_TRUE(gate.expired(500ms, t + 20500ms));
+  EXPECT_FALSE(gate.expired(500ms, t + 20500ms));
+  EXPECT_FALSE(gate.watchdog_armed());
+  EXPECT_TRUE(gate.command_received(t + 21s));
+  EXPECT_TRUE(gate.expired(500ms, t + 21500ms));
 }
 
 TEST(CommandGate, AutomaticActivationWaitsWithoutWatchdog)
