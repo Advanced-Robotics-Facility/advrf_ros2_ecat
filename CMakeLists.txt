@@ -13,17 +13,6 @@ set(ECAT_CLIENT_SOURCE_DIR
   CACHE PATH "Upstream client source containing its matching bundled spdlog headers"
 )
 
-find_path(ECAT_CLIENT_SPDLOG_INCLUDE_DIR spdlog/version.h
-  PATHS "${ECAT_CLIENT_SOURCE_DIR}/external/spdlog/include"
-  NO_DEFAULT_PATH
-)
-
-if(NOT ECAT_CLIENT_SPDLOG_INCLUDE_DIR)
-  message(FATAL_ERROR
-    "Initialize the client submodules or set ECAT_CLIENT_SOURCE_DIR to the matching client source"
-  )
-endif()
-
 option(XENOMAI "Enable Xenomai support" OFF)
 
 set(ECAT_INSTALL_PREFIX "$ENV{ECAT_INSTALL_PREFIX}"
@@ -58,10 +47,6 @@ add_library(advrf_ros2_ecat_lib
 target_include_directories(advrf_ros2_ecat_lib PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include>
-)
-
-target_include_directories(advrf_ros2_ecat_lib SYSTEM BEFORE PUBLIC
-  "${ECAT_CLIENT_SPDLOG_INCLUDE_DIR}"
 )
 
 ament_target_dependencies(advrf_ros2_ecat_lib PUBLIC
