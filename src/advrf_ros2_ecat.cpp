@@ -238,8 +238,8 @@ int main(int argc, char **argv)
         startup_parameter.read_only = true;
 
         const int period_ms = node->declare_parameter<int>("period_ms", 4, startup_parameter);
-        const bool active_tx_on_first_msg = node->declare_parameter<bool>(
-            "active_tx_on_first_msg", false, startup_parameter);
+        const bool active_tx_on_first_msg = node->declare_parameter<bool>("active_tx_on_first_msg", false, startup_parameter);
+
         command_gate.activate_on_first_message(active_tx_on_first_msg);
 
         const int command_timeout_ms = node->declare_parameter<int>(
@@ -307,7 +307,7 @@ int main(int argc, char **argv)
         const auto publish_active = [&]()
         {
             std_msgs::msg::Bool state;
-            state.data = command_gate.active();
+            state.data = command_gate.active() || command_gate.awaiting_first_message();
             active_publisher->publish(state);
         };
         publish_active();
