@@ -311,6 +311,8 @@ int main(int argc, char **argv)
             active_publisher->publish(state);
         };
         publish_active();
+
+        
         const auto enter_fault = [&](const std::string &reason)
         {
             if (fault) return;
@@ -331,7 +333,10 @@ int main(int argc, char **argv)
                 fault_reason += std::string("; motor STOP failed: ") + error.what();
             }
             RCLCPP_ERROR(node->get_logger(), "%s", fault_reason.c_str());
+            rclcpp::shutdown();
         };
+
+
         const auto publish_diagnostics = [&]()
         {
             diagnostic_msgs::msg::DiagnosticArray array;
@@ -437,16 +442,14 @@ int main(int argc, char **argv)
                 enter_fault("EtherCAT writer stopped");
             if (!fault && command_gate.expired(milliseconds(command_timeout_ms)))
                 enter_fault("Motor command watchdog timeout");
-            if (Clock::now() >= next_diagnostic || fault)
+            // ROS is shut down by enter_fault after the motor STOP attempt.
+            if (fault)
+                break;
+
+            if (Clock::now() >= next_diagnostic)
             {
                 publish_diagnostics();
                 next_diagnostic = Clock::now() + milliseconds(500);
-            }
-            if (fault)
-            {
-                executor.spin_some();
-                std::this_thread::sleep_for(milliseconds(50));
-                continue;
             }
             client->read();
             client->get_motor_status(motor_status_map);
@@ -483,8 +486,8 @@ int main(int argc, char **argv)
         }
 
         ec_writer.stop_writer();
-        ec_writer.rethrow_error();
         ec_wrapper.stop_ec_sys();
+        ec_writer.rethrow_error();
     }
     catch (const std::exception &error)
     {
