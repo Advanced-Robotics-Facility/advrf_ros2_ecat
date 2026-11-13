@@ -238,6 +238,8 @@ int main(int argc, char **argv)
         startup_parameter.read_only = true;
 
         const int period_ms = node->declare_parameter<int>("period_ms", 4, startup_parameter);
+        const auto joint_states_frame_id = node->declare_parameter<std::string>(
+            "joint_states_frame_id", "", startup_parameter);
         const bool active_tx_on_first_msg = node->declare_parameter<bool>("active_tx_on_first_msg", false, startup_parameter);
 
         command_gate.activate_on_first_message(active_tx_on_first_msg);
@@ -463,7 +465,8 @@ int main(int argc, char **argv)
             }
 
             // ROS 2 publishers.
-            const auto telemetry = convert::to_ros(state, names, motor_reference_map);
+            auto telemetry = convert::to_ros(state, names, motor_reference_map);
+            telemetry.joints.header.frame_id = joint_states_frame_id;
             motors->publish(telemetry.motors);
             joints->publish(telemetry.joints);
 

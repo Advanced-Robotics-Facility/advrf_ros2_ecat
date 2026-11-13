@@ -43,6 +43,7 @@ Parameters (startup only):
 | Parameter | Default | Values / purpose |
 | --- | --- | --- |
 | `period_ms` | `4` | Positive integer; ROS loop period |
+| `joint_states_frame_id` | `""` | Frame ID for published `rx/joint_states`; set to an existing TF frame such as `base_link` for the RViz Jazzy Effort display. Read at startup. |
 | `active_tx_on_first_msg` | `false` | Auto-enable TX on first valid command |
 | `command_timeout_ms` | `500` | Positive integer; command watchdog timeout |
 | `qos.state.depth` | `1` | `1..100000` |
