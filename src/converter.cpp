@@ -12,11 +12,11 @@ namespace
 {
 using MotorCommand = advrf_ros2_interfaces::msg::MotorTxPdo;
 
-bool finite_references(const MotorCommand& message)
+bool finite_references(const MotorCommand& message, std::size_t i)
 {
     for (float value :
-         {message.pos_ref, message.vel_ref, message.tor_ref, message.cur_ref, message.gain_0,
-          message.gain_1, message.gain_2, message.gain_3, message.gain_4})
+         {message.pos_ref[i], message.vel_ref[i], message.tor_ref[i], message.cur_ref[i], message.gain_0[i],
+          message.gain_1[i], message.gain_2[i], message.gain_3[i], message.gain_4[i]})
     {
         if (!std::isfinite(value))
         {
@@ -27,40 +27,40 @@ bool finite_references(const MotorCommand& message)
     return true;
 }
 
-std::optional<MotorPdoTx::pdo_t> motor_reference_from_ros(const MotorCommand& message, int configured_mode)
+std::optional<MotorPdoTx::pdo_t> motor_reference_from_ros(const MotorCommand& message, std::size_t i, int configured_mode)
 {
-    if (message.fault_ack != 0 || message.ts != 0 || message.op_idx_aux != 0 || message.aux != 0 ||
-        !finite_references(message))
+    if (message.fault_ack[i] != 0 || message.ts[i] != 0 || message.op_idx_aux[i] != 0 || message.aux[i] != 0 ||
+        !finite_references(message, i))
     {
         return std::nullopt;
     }
 
     const bool current_mode = configured_mode == iit::advr::Gains_Type_CURRENT;
-    if ((current_mode && message.tor_ref != 0) || (!current_mode && message.cur_ref != 0)) {
+    if ((current_mode && message.tor_ref[i] != 0) || (!current_mode && message.cur_ref[i] != 0)) {
         return std::nullopt;
     }
 
-    const float effort = current_mode ? message.cur_ref : message.tor_ref;
-    float gain_0 = message.gain_0;
-    float gain_1 = message.gain_1;
-    float gain_2 = message.gain_2;
-    float gain_3 = message.gain_3;
-    float gain_4 = message.gain_4;
+    const float effort = current_mode ? message.cur_ref[i] : message.tor_ref[i];
+    float gain_0 = message.gain_0[i];
+    float gain_1 = message.gain_1[i];
+    float gain_2 = message.gain_2[i];
+    float gain_3 = message.gain_3[i];
+    float gain_4 = message.gain_4[i];
 
     if (configured_mode == iit::advr::Gains_Type_POSITION || configured_mode == iit::advr::Gains_Type_VELOCITY)
     {
-        if (message.gain_2 != 0 || message.gain_3 != 0) {
+        if (message.gain_2[i] != 0 || message.gain_3[i] != 0) {
             return std::nullopt;
         }
-        gain_1 = message.gain_4;
-        gain_2 = message.gain_1;
+        gain_1 = message.gain_4[i];
+        gain_2 = message.gain_1[i];
         gain_3 = 0;
         gain_4 = 0;
     }
 
     return MotorPdoTx::pdo_t{configured_mode,
-                             message.pos_ref,
-                             message.vel_ref,
+                             message.pos_ref[i],
+                             message.vel_ref[i],
                              effort,
                              gain_0,
                              gain_1,
@@ -89,22 +89,39 @@ template <typename Status> std::string fault_report(const Status& status)
 
 std::optional<MotorReferenceMap> from_ros(const Commands& message, const MotorReferenceMap& previous)
 {
-    if (message.data.empty() || message.data.size() > max_motors || previous.size() > max_motors) {
+    if (message.ecat_id.empty() || message.ecat_id.size() > max_motors || previous.size() > max_motors) {
+        return std::nullopt;
+    }
+
+    const auto size = message.ecat_id.size();
+    if (message.pos_ref.size() != size ||
+        message.vel_ref.size() != size ||
+        message.tor_ref.size() != size ||
+        message.cur_ref.size() != size ||
+        message.gain_0.size() != size ||
+        message.gain_1.size() != size ||
+        message.gain_2.size() != size ||
+        message.gain_3.size() != size ||
+        message.gain_4.size() != size ||
+        message.fault_ack.size() != size ||
+        message.ts.size() != size ||
+        message.op_idx_aux.size() != size ||
+        message.aux.size() != size) {
         return std::nullopt;
     }
 
     MotorReferenceMap result = previous;
     std::set<int32_t> seen;
 
-    for (const auto& command : message.data)
+    for (std::size_t i = 0; i < size; ++i)
     {
-        auto reference = result.find(command.ecat_id);
-        if (reference == result.end() || !seen.insert(command.ecat_id).second) {
+        auto reference = result.find(message.ecat_id[i]);
+        if (reference == result.end() || !seen.insert(message.ecat_id[i]).second) {
             return std::nullopt;
         }
 
         const int configured_mode = std::get<0>(reference->second);
-        auto converted = motor_reference_from_ros(command, configured_mode);
+        auto converted = motor_reference_from_ros(message, i, configured_mode);
         if (!converted) {
             return std::nullopt;
         }

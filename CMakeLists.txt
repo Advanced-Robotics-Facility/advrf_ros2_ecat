@@ -89,6 +89,8 @@ install(DIRECTORY config DESTINATION share/${PROJECT_NAME})
 
 if(BUILD_TESTING)
   find_package(ament_cmake_gtest REQUIRED)
+  ament_add_gtest(test_converter test/test_converter.cpp)
+  target_link_libraries(test_converter advrf_ros2_ecat_lib)
   ament_add_gtest(test_command_gate test/test_command_gate.cpp)
   target_include_directories(test_command_gate PRIVATE include)
 endif()

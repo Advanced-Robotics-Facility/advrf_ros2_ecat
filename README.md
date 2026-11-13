@@ -58,9 +58,9 @@ Topics (relative to node namespace, except `/diagnostics`):
 
 | Topic | Direction | Type | QoS |
 | --- | --- | --- | --- |
-| `rx/motors` | Publish | `advrf_ros2_interfaces/msg/Motor` | `qos.state.*` |
+| `rx/motors` | Publish | `advrf_ros2_interfaces/msg/MotorRxPdo` | `qos.state.*` |
 | `rx/joint_states` | Publish | `sensor_msgs/msg/JointState` | `qos.state.*` |
-| `tx/motors` | Subscribe | `advrf_ros2_interfaces/msg/MotorTxPdoVector` | `qos.command.*` |
+| `tx/motors` | Subscribe | `advrf_ros2_interfaces/msg/MotorTxPdo` | `qos.command.*` |
 | `active` | Publish | `std_msgs/msg/Bool` | Reliable, transient local, depth 1 |
 | `/diagnostics` | Publish | `diagnostic_msgs/msg/DiagnosticArray` | Reliable, volatile, depth 10 |
 

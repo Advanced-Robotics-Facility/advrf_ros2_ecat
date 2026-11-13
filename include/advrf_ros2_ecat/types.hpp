@@ -1,6 +1,6 @@
 #pragma once
-#include <advrf_ros2_interfaces/msg/motor.hpp>
-#include <advrf_ros2_interfaces/msg/motor_tx_pdo_vector.hpp>
+#include <advrf_ros2_interfaces/msg/motor_rx_pdo.hpp>
+#include <advrf_ros2_interfaces/msg/motor_tx_pdo.hpp>
 #include <sensor_msgs/msg/joint_state.hpp>
 #include <api/ec_types.h>
 #include <array>
@@ -9,8 +9,8 @@ namespace advrf_ros2_ecat
 {
 
 constexpr std::size_t max_motors = 128;
-using Motor = advrf_ros2_interfaces::msg::Motor;
-using Commands = advrf_ros2_interfaces::msg::MotorTxPdoVector;
+using Motor = advrf_ros2_interfaces::msg::MotorRxPdo;
+using Commands = advrf_ros2_interfaces::msg::MotorTxPdo;
 using JointState = sensor_msgs::msg::JointState;
 struct State
 {
