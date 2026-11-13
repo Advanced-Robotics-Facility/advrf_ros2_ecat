@@ -449,7 +449,7 @@ int main(int argc, char **argv)
             if (Clock::now() >= next_diagnostic)
             {
                 publish_diagnostics();
-                next_diagnostic = Clock::now() + milliseconds(500);
+                next_diagnostic = Clock::now() + milliseconds(100);
             }
             client->read();
             client->get_motor_status(motor_status_map);

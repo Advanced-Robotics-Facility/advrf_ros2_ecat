@@ -1,6 +1,6 @@
 /**:
   ros__parameters:
-    pub_rate: 2.0
+    pub_rate: 10.0
     analyzers:
       ethercat:
         type: diagnostic_aggregator/GenericAnalyzer
