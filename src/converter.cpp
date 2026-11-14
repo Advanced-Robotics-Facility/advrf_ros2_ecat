@@ -41,32 +41,22 @@ std::optional<MotorPdoTx::pdo_t> motor_reference_from_ros(const MotorCommand& me
     }
 
     const float effort = current_mode ? message.cur_ref[i] : message.tor_ref[i];
-    float gain_0 = message.gain_0[i];
-    float gain_1 = message.gain_1[i];
-    float gain_2 = message.gain_2[i];
-    float gain_3 = message.gain_3[i];
-    float gain_4 = message.gain_4[i];
 
-    if (configured_mode == iit::advr::Gains_Type_POSITION || configured_mode == iit::advr::Gains_Type_VELOCITY)
-    {
-        if (message.gain_2[i] != 0 || message.gain_3[i] != 0) {
-            return std::nullopt;
-        }
-        gain_1 = message.gain_4[i];
-        gain_2 = message.gain_1[i];
-        gain_3 = 0;
-        gain_4 = 0;
+    // Position/velocity firmware uses [Kp, Ki, Kd] in gain_0..2; gain_3/4 are unused.
+    if ((configured_mode == iit::advr::Gains_Type_POSITION || configured_mode == iit::advr::Gains_Type_VELOCITY) &&
+        (message.gain_3[i] != 0 || message.gain_4[i] != 0)) {
+        return std::nullopt;
     }
 
     return MotorPdoTx::pdo_t{configured_mode,
                              message.pos_ref[i],
                              message.vel_ref[i],
                              effort,
-                             gain_0,
-                             gain_1,
-                             gain_2,
-                             gain_3,
-                             gain_4,
+                             message.gain_0[i],
+                             message.gain_1[i],
+                             message.gain_2[i],
+                             message.gain_3[i],
+                             message.gain_4[i],
                              iit::advr::AuxPDO_Op_NOP,
                              0,
                              0};
