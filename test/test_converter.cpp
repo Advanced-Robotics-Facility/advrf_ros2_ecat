@@ -66,6 +66,59 @@ TEST(Converter, RejectsEveryMismatchedArray)
 #undef CHECK_ARRAY
 }
 
+TEST(Converter, PositionGainsPassThroughUnchanged)
+{
+    auto msg = command();
+    msg.gain_0 = {1.f};
+    msg.gain_1 = {2.f};
+    msg.gain_2 = {3.f};
+    const auto converted = convert::from_ros(msg, references());
+    ASSERT_TRUE(converted);
+    const auto& pdo = converted->at(7);
+    EXPECT_FLOAT_EQ(std::get<4>(pdo), 1.f);
+    EXPECT_FLOAT_EQ(std::get<5>(pdo), 2.f);
+    EXPECT_FLOAT_EQ(std::get<6>(pdo), 3.f);
+    EXPECT_FLOAT_EQ(std::get<7>(pdo), 0.f);
+    EXPECT_FLOAT_EQ(std::get<8>(pdo), 0.f);
+}
+
+TEST(Converter, PositionAndVelocityRejectUnusedGainSlots)
+{
+    for (int mode : {iit::advr::Gains_Type_POSITION, iit::advr::Gains_Type_VELOCITY}) {
+        MotorPdoTx::pdo_t value{};
+        std::get<0>(value) = mode;
+        const MotorReferenceMap previous{{7, value}};
+
+        auto msg = command();
+        msg.gain_3 = {1.f};
+        EXPECT_FALSE(convert::from_ros(msg, previous)) << "gain_3 mode " << mode;
+
+        msg = command();
+        msg.gain_4 = {1.f};
+        EXPECT_FALSE(convert::from_ros(msg, previous)) << "gain_4 mode " << mode;
+    }
+}
+
+TEST(Converter, ImpedanceKeepsAllFiveGains)
+{
+    MotorPdoTx::pdo_t value{};
+    std::get<0>(value) = iit::advr::Gains_Type_IMPEDANCE;
+    auto msg = command();
+    msg.gain_0 = {1.f};
+    msg.gain_1 = {2.f};
+    msg.gain_2 = {3.f};
+    msg.gain_3 = {4.f};
+    msg.gain_4 = {5.f};
+    const auto converted = convert::from_ros(msg, {{7, value}});
+    ASSERT_TRUE(converted);
+    const auto& pdo = converted->at(7);
+    EXPECT_FLOAT_EQ(std::get<4>(pdo), 1.f);
+    EXPECT_FLOAT_EQ(std::get<5>(pdo), 2.f);
+    EXPECT_FLOAT_EQ(std::get<6>(pdo), 3.f);
+    EXPECT_FLOAT_EQ(std::get<7>(pdo), 4.f);
+    EXPECT_FLOAT_EQ(std::get<8>(pdo), 5.f);
+}
+
 TEST(Converter, RejectsEmptyAndUnknownIds)
 {
     EXPECT_FALSE(convert::from_ros(Commands{}, references()));
